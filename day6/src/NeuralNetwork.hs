@@ -387,16 +387,36 @@ linear = liftOp2. op2 $ \(Linear w b) x ->
                   in (Linear dW dB, dX)
      )
 
-sign_ = undefined
+-- | Sign activation
+sign_ :: (Index ix, Unbox e, Ord e, Num e) => Array U ix e -> Array U ix e
+sign_ = computeMap f
+  where
+    f x = if x <= 0
+             then -1
+             else 1
 
+-- | Sign gradient approximation
+sign' :: (Index ix, Unbox e, Ord e, Num e)
+      => Array U ix e
+      -> Array U ix e
+      -> Array U ix e
+sign' x = compute. A.zipWith f x
+  where
+    f x0 dy0 = if (x0 > (-1)) && (x0 < 1)
+                  then dy0
+                  else 0
+
+sign :: (Reifies s W, Index ix)
+     => BVar s (Array U ix Float)
+     -> BVar s (Array U ix Float)
 sign = undefined
 
 relu_ :: (Index ix, Unbox e, Ord e, Num e) => Array U ix e -> Array U ix e
 relu_ = computeMap (max 0)
 
 relu :: (Reifies s W, Index ix)
-        => BVar s (Array U ix Float)
-        -> BVar s (Array U ix Float)
+     => BVar s (Array U ix Float)
+     -> BVar s (Array U ix Float)
 relu = liftOp1. op1 $ \x ->
   (relu_ x, \dY ->
     let f x0 dy0 = if x0 <= 0
