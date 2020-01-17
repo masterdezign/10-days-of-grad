@@ -409,7 +409,8 @@ sign' x = compute. A.zipWith f x
 sign :: (Reifies s W, Index ix)
      => BVar s (Array U ix Float)
      -> BVar s (Array U ix Float)
-sign = undefined
+sign = liftOp1. op1 $ \x ->
+  (sign_ x, sign' x)
 
 relu_ :: (Index ix, Unbox e, Ord e, Num e) => Array U ix e -> Array U ix e
 relu_ = computeMap (max 0)
