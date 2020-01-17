@@ -26,10 +26,6 @@ module NeuralNetwork
   , sign_
   , relu
   , relu_
-  , conv2d
-  , conv2d_
-  , conv2d'
-  , conv2d''
   , maxpool
   , maxpool_
   , softmax_
@@ -55,7 +51,6 @@ module NeuralNetwork
   , sumCols
   , computeMap
   , randLinear
-  , randConv2d
   , randNetwork
   , rand
   , randn
@@ -101,69 +96,73 @@ data Linear a = Linear { _weights :: !(Matrix a)
 newtype LinearB a = LinearB { _weights' :: Matrix a }
   deriving (Show, Generic)
 
-data BatchNorm1d a = BatchNorm1d { _gamma :: Vector a  -- TODO: add running mean and variance
-                                 , _beta :: Vector a
-                                 }
-  deriving (Show, Generic)
-
--- | Convolutional layer weights. We omit biases for simplicity.
-newtype Conv2d a = Conv2d { _kernels :: Volume4 a }
+-- Batchnorm adaptation for BNNs: mean normalization
+data BatchNorm1d' a = BatchNorm1d' { _beta :: Vector a  -- Learnable parameter
+                                   , _runningMean :: Vector a  -- Running mean
+                                   }
   deriving (Show, Generic)
 
 instance NFData (Linear a)
 -- makeLenses ''Linear
 
-instance NFData (Conv2d a)
--- makeLenses ''Conv2d
+instance NFData (LinearB a)
+
+instance NFData (BatchNorm1d' a)
 
 data BNN a =
     BNN { _fc1 :: !(LinearB a)
-        , _bn1 :: !(BatchNorm1d a)
+        , _bn1 :: !(BatchNorm1d' a)
         , _fc2 :: !(LinearB a)
-        , _bn2 :: !(BatchNorm1d a)
+        , _bn2 :: !(BatchNorm1d' a)
         , _fc3 :: !(LinearB a)
-        , _bn3 :: !(BatchNorm1d a)
+        , _bn3 :: !(BatchNorm1d' a)
         }
   deriving (Show, Generic)
 
 makeLenses ''BNN
 
-sameConv2d :: Reifies s W
-    => BVar s (Conv2d Float)
-    -> BVar s (Volume4 Float)
-    -> BVar s (Volume4 Float)
-sameConv2d = conv2d (Padding (Sz2 2 2) (Sz2 2 2) (Fill 0.0))
-
-validConv2d :: Reifies s W
-    => BVar s (Conv2d Float)
-    -> BVar s (Volume4 Float)
-    -> BVar s (Volume4 Float)
-validConv2d = conv2d noPad2
-
 -- Inputs are NOT binary. Binary weights
+linear' :: Reifies s W
+        => BVar s (LinearB Float)
+        -> BVar s (Matrix Float)
+        -> BVar s (Matrix Float)
 linear' = undefined
 
 -- Both inputs and weights are binary
+linearB :: Reifies s W
+        => BVar s (LinearB Float)
+        -> BVar s (Matrix Float)
+        -> BVar s (Matrix Float)
 linearB = undefined
+
+-- Mean normalization
+bn' :: Reifies s W
+    => BVar s (BatchNorm1d' Float)
+    -> BVar s (Matrix Float)
+    -> BVar s (Matrix Float)
+bn' = undefined
 
 binaryNet
     :: (Reifies s W)
     => BVar s (BNN Float)
     -> Volume4 Float  -- ^ Batch of MNIST images
     -> BVar s (Matrix Float)
-binaryNet l = undefined
--- binaryNet l = constVar
---             ~> flatten
---
---             -- Classifier
---             -- Layer #3
---             ~> linear' (l ^^. fc1)
---             ~> sign
---             -- Layer #4
---             ~> linearB (l ^^. fc2)
---             ~> sign
---             -- Layer #5
---             ~> linearB (l ^^. fc3)
+binaryNet l = constVar
+            ~> flatten
+
+            -- Layer #1
+            ~> linear' (l ^^. fc1)
+            ~> bn' (l ^^. bn1)
+            ~> sign
+
+            -- Layer #2
+            ~> linearB (l ^^. fc2)
+            ~> bn' (l ^^. bn2)
+            ~> sign
+
+            -- Layer #3
+            ~> linearB (l ^^. fc3)
+            ~> bn' (l ^^. bn3)
 {-# INLINE binaryNet #-}
 
 infixl 9 ~>
@@ -189,15 +188,6 @@ instance (Num a, Unbox a, Index ix) => Num (Array U ix a) where
     signum      = error "Please define signum"
     fromInteger = error "Please define me"
 
-instance (Num a, Unbox a) => Num (Conv2d a) where
-    (+)         = gPlus
-    (-)         = gMinus
-    (*)         = gTimes
-    negate      = gNegate
-    abs         = gAbs
-    signum      = gSignum
-    fromInteger = gFromInteger
-
 instance (Num a, Unbox a) => Num (Linear a) where
     (+)         = gPlus
     (-)         = gMinus
@@ -216,7 +206,7 @@ instance (Num a, Unbox a) => Num (LinearB a) where
     signum      = gSignum
     fromInteger = gFromInteger
 
-instance (Num a, Unbox a) => Num (BatchNorm1d a) where
+instance (Num a, Unbox a) => Num (BatchNorm1d' a) where
     (+)         = gPlus
     (-)         = gMinus
     (*)         = gTimes
@@ -236,27 +226,9 @@ instance ( Unbox a
     signum      = gSignum
     fromInteger = gFromInteger
 
--- instance (Num a, Unbox a) => Fractional (Conv2d a) where
---     (/)          = error "Please define Conv2d (/)"
---     recip        = error "Please define Conv2d recip"
---     fromRational = error "Please define Conv2d fromRational (introduce Conv2d a i o)"
---
--- instance (Num a, Unbox a) => Fractional (Linear a) where
---     (/)          = error "Please define Linear (/)"
---     recip        = error "Please define Linear recip"
---     fromRational = error "Please define Linear fromRational (introduce Linear a i o)"
---
--- instance ( Num a
---          , Unbox a
---          ) => Fractional (Net a) where
---     (/)          = gDivide
---     recip        = gRecip
---     fromRational = gFromRational
-
-instance (Num a, Unbox a) => Backprop (Conv2d a)
 instance (Num a, Unbox a) => Backprop (Linear a)
 instance (Num a, Unbox a) => Backprop (LinearB a)
-instance (Num a, Unbox a) => Backprop (BatchNorm1d a)
+instance (Num a, Unbox a) => Backprop (BatchNorm1d' a)
 instance (Num a, Unbox a) => Backprop (Net a)
 
 -- | 2D convolution that operates on a batch.
@@ -348,25 +320,6 @@ _conv2d'' (Padding (Sz szp1) (Sz szp2) pb) dz x = res
     res = foldl' (\prev ch -> let conv = rsz. applyStencil pad3 (sten ch) $ x
                               in computeAs U $ append' 4 prev conv) base [1..cout - 1]
 {-# INLINE _conv2d'' #-}
-
--- | Differentiable 2D convolutional layer
-conv2d :: Reifies s W
-       => Padding Ix2 Float
-       -> BVar s (Conv2d Float)
-       -> BVar s (Volume4 Float)
-       -> BVar s (Volume4 Float)
-conv2d p@(Padding (Sz (p11 :. p12)) (Sz (p21 :. p22)) be) = liftOp2. op2 $ \(Conv2d w) x ->
-    let conv = conv2d_ p w x
-     in (conv, \dz -> let dw = conv2d'' p x dz
-                          Sz (_ :> _ :> h0 :. w0) = size x
-                          Sz (_ :> _ :> h1 :. w1) = size conv
-                          ch = h0 - h1
-                          cw = w0 - w1
-                          szp1' = (p11 + ch) :. (p12 + cw)
-                          szp2' = (p21 + ch) :. (p22 + cw)
-                          p1 = Padding (Sz szp1') (Sz szp2') be
-                          dx = conv2d' p1 w dz
-                       in (Conv2d dw, dx) )
 
 instance (Index ix, Num e, Unbox e) => Backprop (Array U ix e) where
     zero x = A.replicate Par (size x) 0
@@ -654,22 +607,19 @@ trainStep lr !x !targ !n = n - computeMap' (lr *) (gradBP (crossEntropyLoss x ta
 -- This could be improved:
 -- The problem is that realToFrac does not know about the shape.
 -- This can be solved having that information on the type level.
--- Conv2d a i o k, i = in channels, o = out channels, k = square kernel size
--- and Linear a i o, i = inputs, o = outputs.
--- trainStep lr !x !targ !n = n - realToFrac lr * gradBP (loss x targ) n
 computeMap' :: (Float -> Float) -> BNN Float -> BNN Float
 computeMap' f BNN { _fc1 = LinearB w1
-                  , _bn1 = BatchNorm1d gamma1 beta1
+                  , _bn1 = BatchNorm1d' beta1 runningMean1
                   , _fc2 = LinearB w2
-                  , _bn2 = BatchNorm1d gamma2 beta2
+                  , _bn2 = BatchNorm1d' beta2 runningMean2
                   , _fc3 = LinearB w3
-                  , _bn3 = BatchNorm1d gamma3 beta3
+                  , _bn3 = BatchNorm1d' beta3 runningMean3
                   } = BNN { _fc1 = LinearB (computeMap f w1)
-                          , _bn1 = BatchNorm1d (computeMap f gamma1) (computeMap f beta1)
+                          , _bn1 = BatchNorm1d' (computeMap f beta1) runningMean1
                           , _fc2 = LinearB (computeMap f w2)
-                          , _bn2 = BatchNorm1d (computeMap f gamma2) (computeMap f beta2)
+                          , _bn2 = BatchNorm1d' (computeMap f beta2) runningMean2
                           , _fc3 = LinearB (computeMap f w3)
-                          , _bn3 = BatchNorm1d (computeMap f gamma3) (computeMap f beta3)
+                          , _bn3 = BatchNorm1d' (computeMap f beta3) runningMean3
                           }
 
 -- | Strict left fold
@@ -692,12 +642,6 @@ _genWeights sz = do
   where
     -- Weight scaling factor. Can also be dependent on `sz`.
     k = 0.01
-
--- | Generate random convolutional layer
-randConv2d :: Sz4 -> IO (Conv2d Float)
-randConv2d sz = do
-  k <- setComp Par <$> _genWeights sz
-  return (Conv2d k)
 
 randLinearB = undefined
 
