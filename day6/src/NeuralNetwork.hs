@@ -1,10 +1,4 @@
--- |= Convolutional Neural Network Building Blocks
---
--- Note that some functions have been updated w.r.t massiv-0.4.4.0,
--- most notably changed Data.Massiv.Array.Numeric
---
--- This work was largely inspired by
--- https://github.com/mstksg/backprop/blob/master/samples/backprop-mnist.lhs
+-- |= Binarized Neural Network Building Blocks
 
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DeriveGeneric #-}
@@ -26,14 +20,11 @@ module NeuralNetwork
   , sign_
   , relu
   , relu_
-  , maxpool
-  , maxpool_
   , softmax_
   , flatten
   , linear
   , forward
   , binaryNet
-  , noPad2
   , (~>)
 
   -- * Training
@@ -61,7 +52,7 @@ module NeuralNetwork
 import           Control.Applicative ( liftA2 )
 import           Control.DeepSeq ( NFData )
 import           Control.Monad ( foldM )
-import           Data.List ( foldl', maximumBy )
+import           Data.List ( maximumBy )
 import           Data.Massiv.Array hiding ( map, zip, zipWith, flatten )
 import qualified Data.Massiv.Array as A
 import           Data.Ord
@@ -77,10 +68,6 @@ import qualified System.Random.MWC as MWC
 import           System.Random.MWC ( createSystemRandom )
 import           System.Random.MWC.Distributions ( standard )
 
--- Note that images are volumes of channels x width x height, whereas
--- mini-batches are volumes-4 of batch size x channels x width x height.
--- Similarly, convolutional filter weights are volumes-4 of
--- out channels x in channels x kernel width x kernel height.
 type Vector a = Array U Ix1 a
 type Matrix a = Array U Ix2 a
 type Volume a = Array U Ix3 a
@@ -170,9 +157,6 @@ infixl 9 ~>
 f ~> g = g. f
 {-# INLINE (~>) #-}
 
-noPad2 :: Padding Ix2 Float
-noPad2 = Padding (Sz2 0 0) (Sz2 0 0) (Fill 0.0)
-
 type Net = BNN
 
 -- We would like to be able to perform arithmetic
@@ -230,96 +214,6 @@ instance (Num a, Unbox a) => Backprop (Linear a)
 instance (Num a, Unbox a) => Backprop (LinearB a)
 instance (Num a, Unbox a) => Backprop (BatchNorm1d' a)
 instance (Num a, Unbox a) => Backprop (Net a)
-
--- | 2D convolution that operates on a batch.
---
--- Padding is Ix2 because it is performed only w.r.t. width and height.
---
--- The stride is assumed to be 1, but this can be extended
--- in a straightforward manner with `computeWithStride`.
--- Do not forget to use strides 1 in batch and channel dimensions (Dim4, Dim3).
-conv2d_
-       :: Padding Ix2 Float  -- ^ Image plane padding (p1 :. p2) (q1 :. q2)
-       -> Volume4 Float  -- ^ Weights (cout :> cin :> w1 :> w2)
-       -> Volume4 Float  -- ^ Batch of input features (bs :> cin :> x1 :. x2)
-       -> Volume4 Float  -- ^ Output features
-                         -- (bs :> cout :> x1 - w1 + p1 + q1 + 1 :> x2 - w2 + p2 + q2 + 1)
-conv2d_ (Padding (Sz szp1) (Sz szp2) be) w x = res
-  where
-    (Sz (cout :> cin :> w1 :. w2)) = size w
-    -- Extract weights, add fake Dim4, and make stencil
-    sten = makeCorrelationStencilFromKernel. resize' (Sz4 1 cin w1 w2). (w !>)
-    {-# INLINE sten #-}
-    -- Add zeroes in batch and channel dimensions
-    pad4 = Padding (Sz (0 :> 0 :> szp1)) (Sz (0 :> 0 :> szp2)) be
-    -- Note: we apply stencils on zero channel of *all* images in the batch
-    base = computeAs U $ applyStencil pad4 (sten 0) x
-    -- Again, stencils are applied simultaneously on all images for a given
-    -- channel
-    res = foldl' (\prev ch -> let conv = computeAs U $ applyStencil pad4 (sten ch) x
-                              in computeAs U $ append' 3 prev conv) base [1..cout - 1]
-
--- | Input gradients
---
--- \[ dX = \delta (*) W_{flip}, \]
---
--- where (*) is cross-correlation. We also have to perform inner transpose
--- over the kernel volume since we are propagating errors in the backward
--- direction.
-conv2d'
-  :: Padding Ix2 Float -> Volume4 Float -> Volume4 Float -> Volume4 Float
-conv2d' p w dz = conv2d_ p w' dz
-  where
-    w' = (compute. rot180. transposeInner) w
-
-    -- Rotate image kernels by 180 degrees
-    rot180 = reverse' 1. reverse' 2
-    {-# INLINE rot180 #-}
-
--- | Kernel gradients
---
--- \[ dW = X (*) delta \]
-conv2d''
-  :: Padding Ix2 Float -> Volume4 Float -> Volume4 Float -> Volume4 Float
--- Iterate over images in a batch
-conv2d'' p x dz = res  -- computeMap (/fromIntegral bs) res
-  where
-    -- Assume bs1 == bs2
-    Sz (bs :> _) = size x
-    -- (sum. zipWith) in 5D
-    dzd = delay dz
-    xd = delay x
-    base = _conv2d'' p (compute $ dzd !> 0) (compute $ xd !> 0)
-    -- Accumulate gradients over the batch
-    res = foldl' (\acc im ->
-      let cur = _conv2d'' p (compute $ dzd !> im) (compute $ xd !> im)
-       in acc + cur) base [1..bs-1]
-
--- Iterate over out channels, i.e. dW has the same outer dimension as dZ (after
--- image indexing)
-_conv2d'' :: Padding Ix2 Float
-          -> Volume Float
-          -> Volume Float
-          -> Volume4 Float
-_conv2d'' (Padding (Sz szp1) (Sz szp2) pb) dz x = res
-  where
-    (Sz (cout :> dz1 :. dz2)) = size dz
-    sten i =
-      let kernel2d = dz !> i
-          kernel3d = computeAs U $ resize' (Sz3 1 dz1 dz2) kernel2d :: Volume Float
-       in makeCorrelationStencilFromKernel kernel3d
-    {-# INLINE sten #-}
-    pad3 = Padding (Sz (0 :> szp1)) (Sz (0 :> szp2)) pb
-    base0 = applyStencil pad3 (sten 0) x
-
-    Sz szW0 = size base0
-    szW = Sz (1 :> szW0)
-    rsz = resize' szW. computeAs U
-
-    base = rsz base0
-    res = foldl' (\prev ch -> let conv = rsz. applyStencil pad3 (sten ch) $ x
-                              in computeAs U $ append' 4 prev conv) base [1..cout - 1]
-{-# INLINE _conv2d'' #-}
 
 instance (Index ix, Num e, Unbox e) => Backprop (Array U ix e) where
     zero x = A.replicate Par (size x) 0
@@ -395,76 +289,6 @@ sigmoid = liftOp1. op1 $ \x ->
   where
     f x = recip $ 1.0 + exp (-x)
 
-maxpoolStencil2x2 :: Stencil Ix4 Float Float
-maxpoolStencil2x2 = makeStencil (Sz4 1 1 2 2) 0 $ \ get -> let max4 x1 x2 x3 x4 = max (max (max x1 x2) x3) x4 in max4 <$> get (0 :> 0 :> 0 :. 0) <*> get (0 :> 0 :> 1 :. 1) <*> get (0 :> 0 :> 0 :. 1) <*> get (0 :> 0 :> 1 :. 0)
-
-maxpool_ :: Volume4 Float -> Volume4 Float
-maxpool_ = computeWithStride (Stride (1 :> 1 :> 2 :. 2)). applyStencil noPadding maxpoolStencil2x2
-
--- > testA = fromLists' Seq [[[[1..4],[5..8],[9..12],[13..16]]]] :: Array U Ix4 Float
---
--- > testA
--- Array U Seq (Sz (1 :> 1 :> 4 :. 4))
---   [ [ [ [ 1.0, 2.0, 3.0, 4.0 ]
---       , [ 5.0, 6.0, 7.0, 8.0 ]
---       , [ 9.0, 10.0, 11.0, 12.0 ]
---       , [ 13.0, 14.0, 15.0, 16.0 ]
---       ]
---     ]
---   ]
--- > maxpool_ testA
--- Array U Seq (Sz (1 :> 1 :> 2 :. 2))
---   [ [ [ [ 6.0, 8.0 ]
---       , [ 14.0, 16.0 ]
---       ]
---     ]
---   ]
--- > testB = resize' (Sz4 2 1 2 4) testA
--- > testB
--- Array U Seq (Sz (2 :> 1 :> 2 :. 4))
---   [ [ [ [ 1.0, 2.0, 3.0, 4.0 ]
---       , [ 5.0, 6.0, 7.0, 8.0 ]
---       ]
---     ]
---   , [ [ [ 9.0, 10.0, 11.0, 12.0 ]
---       , [ 13.0, 14.0, 15.0, 16.0 ]
---       ]
---     ]
---   ]
--- > maxpool_ testB
--- Array U Seq (Sz (2 :> 1 :> 1 :. 2))
---   [ [ [ [ 6.0, 8.0 ]
---       ]
---     ]
---   , [ [ [ 14.0, 16.0 ]
---       ]
---     ]
---   ]
-
-maxpool :: Reifies s W
-        => BVar s (Volume4 Float)
-        -> BVar s (Volume4 Float)
-maxpool = liftOp1. op1 $ \x ->
-  let out = maxpool_ x
-      s = Stride (1 :> 1 :> 2 :. 2)
-      outUp = computeAs U $ zoom s out
-      maxima = A.zipWith (\a b -> if a == b then 1 else 0) outUp x
-  in (out, \dz -> let dzUp = computeAs U $ zoom s dz
-                  in maybe (error $ "Dimensions problem " ++ show (size out, size dz, size outUp, size maxima, size dzUp)) compute (maxima .*. delay dzUp))
-
--- Test maxpool gradients
--- testC :: Volume4 Float
--- testC =
---   let a0 = A.fromLists' Par [[1,7],[3,4]] :: Matrix Float
---       b = resize' (Sz4 1 1 2 2) a0
---    in gradBP maxpool b
--- Array U Par (Sz (1 :> 1 :> 2 :. 2))
---   [ [ [ [ 0.0, 1.0 ]
---       , [ 0.0, 0.0 ]
---       ]
---     ]
---   ]
---
 flatten :: Reifies s W
         => BVar s (Volume4 Float)
         -> BVar s (Matrix Float)
