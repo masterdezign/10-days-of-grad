@@ -23,6 +23,7 @@ module NeuralNetwork
   , softmax_
   , flatten
   , linear
+  , linearB
   , forward
   , binaryNet
   , (~>)
@@ -108,27 +109,6 @@ data BNN a =
 
 makeLenses ''BNN
 
--- Inputs are NOT binary. Binary weights
-linear' :: Reifies s W
-        => BVar s (LinearB Float)
-        -> BVar s (Matrix Float)
-        -> BVar s (Matrix Float)
-linear' = undefined
-
--- Both inputs and weights are binary
-linearB :: Reifies s W
-        => BVar s (LinearB Float)
-        -> BVar s (Matrix Float)
-        -> BVar s (Matrix Float)
-linearB = undefined
-
--- Mean normalization
-bn' :: Reifies s W
-    => BVar s (BatchNorm1d' Float)
-    -> BVar s (Matrix Float)
-    -> BVar s (Matrix Float)
-bn' = undefined
-
 binaryNet
     :: (Reifies s W)
     => BVar s (BNN Float)
@@ -138,7 +118,7 @@ binaryNet l = constVar
             ~> flatten
 
             -- Layer #1
-            ~> linear' (l ^^. fc1)
+            ~> linearB (l ^^. fc1)
             ~> bn' (l ^^. bn1)
             ~> sign
 
@@ -233,6 +213,27 @@ linear = liftOp2. op2 $ \(Linear w b) x ->
                       dX = linearX' w dZ
                   in (Linear dW dB, dX)
      )
+
+-- | Linear layer binarizing weights to +1 and -1 in the forward pass
+-- and with no learnable biases.
+linearB :: Reifies s W
+        => BVar s (LinearB Float)
+        -> BVar s (Matrix Float)
+        -> BVar s (Matrix Float)
+linearB = liftOp2. op2 $ \(LinearB w) x ->
+  let wB = sign_ w  -- Binarized weights
+      prod = maybe (error $ "Dimension mismatch " ++ show (size x, size wB)) compute (x |*| wB)
+   in (prod, \dZ -> let dW = linearW' x dZ
+                        dX = linearX' wB dZ
+                     in (LinearB dW, dX)
+      )
+
+-- Mean normalization
+bn' :: Reifies s W
+    => BVar s (BatchNorm1d' Float)
+    -> BVar s (Matrix Float)
+    -> BVar s (Matrix Float)
+bn' = undefined
 
 -- | Sign activation
 sign_ :: (Index ix, Unbox e, Ord e, Num e) => Array U ix e -> Array U ix e
@@ -459,6 +460,12 @@ randLinear sz@(Sz2 _ nout) = do
     where
       _genBiases n = randn (Sz n)
 
+-- | Generate random real (meta-)weights
+randLinearB :: Sz2 -> IO (LinearB Float)
+randLinearB sz = do
+  _w <- setComp Par <$> _genWeights sz
+  return (LinearB _w)
+
 _genWeights :: Index ix => Sz ix -> IO (Array U ix Float)
 _genWeights sz = do
     a <- randn sz
@@ -466,8 +473,6 @@ _genWeights sz = do
   where
     -- Weight scaling factor. Can also be dependent on `sz`.
     k = 0.01
-
-randLinearB = undefined
 
 randNetwork :: IO (BNN Float)
 randNetwork = do
