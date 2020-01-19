@@ -228,7 +228,7 @@ linearB = liftOp2. op2 $ \(LinearB w) x ->
                      in (LinearB dW, dX)
       )
 
--- Mean normalization
+-- | Batch mean normalization
 bn' :: Reifies s W
     => BVar s (BatchNorm1d' Float)
     -> BVar s (Matrix Float)
@@ -550,3 +550,40 @@ sumCols :: Reifies s W
     -> BVar s (Vector Float)
 sumCols = liftOp1. op1 $ \x ->
   (compute $ sumCols_ x, \dY -> compute $ dY `colsLike` x)
+
+-- | One-dimensional batch mean normalization and
+-- corresponding gradients
+batchnorm1d' :: (Matrix Float, Vector Float, Vector Float)
+  -> ((Matrix Float, Vector Float),
+      Matrix Float -> (Matrix Float, Vector Float))
+batchnorm1d' (inp, gamma, beta) = ((out, mu), grad)
+      where
+        b = flip rowsLike inp  -- Broadcast (replicate) rows from 1 to batch size
+        m = recip $ (fromIntegral $ rows inp)
+
+        -- Step 1: mean
+        mu :: Vector Float
+        mu = compute $ m *. (sumRows_ inp)
+
+        -- Step 2: mean subtraction
+        xmu :: Matrix Float
+        xmu = inp - compute (b mu)
+
+        -- Step 3: translate
+        out :: Matrix Float
+        out = xmu + compute (b beta)
+
+        -- Analytic gradients
+        grad dZ = (dX, dBeta)
+          where
+            -- Step 3
+            dBeta = compute $ sumRows_ dZ
+
+            -- Step 2
+            dx1 = dZ
+            dmu = negate $ sumRows_ dx1
+
+            -- Step 1
+            dx2 = b $ compute (m *. dmu)
+
+            dX = dx1 + dx2
