@@ -1,13 +1,14 @@
+stack=cabal
 datadir=data
 trainset=train-images-idx3-ubyte
 trainlab=train-labels-idx1-ubyte
 testset=t10k-images-idx3-ubyte
 testlab=t10k-labels-idx1-ubyte
 url=http://yann.lecun.com/exdb/mnist
-exec="stack exec mnist -- +RTS -N"
+exec="$stack exec mnist -- +RTS -N -s"
 if [ -f $datadir/$trainset ]
 then
-  stack build && $exec
+  $stack build && $exec
  else
   mkdir -p data
   echo "Attempting to download MNIST data"
@@ -20,7 +21,7 @@ then
   gunzip $datadir/t*-ubyte.gz
   if [ -f $datadir/$trainset ]
    then
-    stack build && $exec
+    $stack build && $exec
    else
     echo "$datadir/$trainset does not exist. Please download and unpack MNIST files to $datadir/"
   fi

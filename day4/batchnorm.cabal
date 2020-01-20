@@ -19,8 +19,8 @@ library
   -- other-modules:
 
   build-depends:
-        base                    >= 4.7 && < 4.13
-      , massiv                  == 0.3.2.1
+        base                    >= 4.7
+      , massiv                  == 0.4.4.0
       , mwc-random
       , random
       , streamly
@@ -38,9 +38,10 @@ executable mnist
     -Wall
     -threaded
     -rtsopts
+--    -fllvm
   default-language:    Haskell2010
   build-depends:
-        base                    >= 4.7  && < 4.13
+        base                    >= 4.7
       , bytestring
       , massiv
       , random
