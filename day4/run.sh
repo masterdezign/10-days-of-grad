@@ -4,7 +4,7 @@ trainlab=train-labels-idx1-ubyte
 testset=t10k-images-idx3-ubyte
 testlab=t10k-labels-idx1-ubyte
 url=http://yann.lecun.com/exdb/mnist
-exec="stack exec mnist -- +RTS -N"
+exec="stack exec mnist -- +RTS -N6"
 if [ -f $datadir/$trainset ]
 then
   stack build && $exec
