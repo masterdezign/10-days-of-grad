@@ -93,12 +93,11 @@ main = do
                        "data/t10k-images-idx3-ubyte"
                        "data/t10k-labels-idx1-ubyte"
 
-  let [i, h1, h2, o] = [784, 300, 50, 10]
+  let [i, h1, o] = [784, 30, 10]
   (w1, b1) <- genWeights (i, h1)
   let ones n = A.replicate Par (Sz1 n) 1 :: Vector Float
       zeros n = A.replicate Par (Sz1 n) 0 :: Vector Float
-  (w2, b2) <- genWeights (h1, h2)
-  (w3, b3) <- genWeights (h2, o)
+  (w2, b2) <- genWeights (h1, o)
 
   -- With batchnorm
   -- NB: Layer' has only weights, no biases.
@@ -109,9 +108,6 @@ main = do
         , Batchnorm1d (zeros h1) (ones h1) (ones h1) (zeros h1)
         , Activation Relu
         , Linear' w2
-        , Batchnorm1d (zeros h2) (ones h2) (ones h2) (zeros h2)
-        , Activation Relu
-        , Linear' w3
         ]
 
   -- No batchnorm layer
@@ -119,8 +115,6 @@ main = do
         [ Linear w1 b1
         , Activation Relu
         , Linear w2 b2
-        , Activation Relu
-        , Linear w3 b3
         ]
 
   putStrLn "SGD + batchnorm"
