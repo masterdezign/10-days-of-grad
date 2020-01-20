@@ -1,4 +1,4 @@
-stack=cabal
+stack=stack
 datadir=data
 trainset=train-images-idx3-ubyte
 trainlab=train-labels-idx1-ubyte

@@ -7,8 +7,8 @@ packages:
 - '.'
 
 extra-deps:
-- massiv-0.3.2.1
-- scheduler-1.1.0
+- massiv-0.4.4.0
+- scheduler-1.4.2.1
 - streamly-0.6.1
 
 # Override default flag values for local packages and extra-deps
