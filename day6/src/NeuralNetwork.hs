@@ -1,10 +1,7 @@
--- |= Neural Network Building Blocks
---
--- The idea of this module is to manage gradients manually.
--- That is done intentionally to illustrate neural
--- networks training.
+-- |= Binarized Neural Network Building Blocks
 
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 module NeuralNetwork
   ( NeuralNetwork
@@ -14,6 +11,8 @@ module NeuralNetwork
   , FActivation(..)
   , sigmoid
   , sigmoid'
+  , sign
+  , sign'
   , genWeights
   , forward
 
@@ -32,7 +31,6 @@ module NeuralNetwork
   , computeMap
   , rand
   , randn
-  , randomishArray
   , scale
   , iterN
   , mean
@@ -45,7 +43,7 @@ import           Control.Monad                  ( replicateM
                                                 , foldM
                                                 )
 import           Control.Applicative            ( liftA2 )
-import qualified System.Random                 as R
+import qualified System.Random.MWC as MWC
 import           System.Random.MWC              ( createSystemRandom )
 import           System.Random.MWC.Distributions
                                                 ( standard )
@@ -69,12 +67,14 @@ type Vector a = Array U Ix1 a
 -- * Rectified linear unit (ReLU)
 -- * Sigmoid
 -- * Identity (no activation)
-data FActivation = Relu | Sigmoid | Id
+data FActivation = Relu | Sigmoid | Sign | Id
 
 -- Neural network layers: Linear, Batchnorm, Activation
 data Layer a = Linear (Matrix a) (Vector a)
                -- Same as Linear, but without biases
                | Linear' (Matrix a)
+               -- Binarized NN
+               | BinarizedLinear (Matrix a)
                -- Batchnorm with running mean, variance, and two
                -- learnable affine parameters
                | Batchnorm1d (Vector a) (Vector a) (Vector a) (Vector a)
@@ -86,6 +86,7 @@ data Gradients a = -- Weight and bias gradients
                    LinearGradients (Matrix a) (Vector a)
                    -- Weight gradients
                    | Linear'Gradients (Matrix a)
+                   | BinarizedLinearGradients (Matrix a)
                    -- Batchnorm parameters and gradients
                    | BN1 (Vector a) (Vector a) (Vector a) (Vector a)
                    | NoGrad  -- No learnable parameters
@@ -98,12 +99,14 @@ getActivation :: FActivation -> (Matrix Float -> Matrix Float)
 getActivation Id      = id
 getActivation Sigmoid = sigmoid
 getActivation Relu    = relu
+getActivation Sign    = sign
 
 -- | Lookup activation function derivative by a symbol
 getActivation' :: FActivation -> (Matrix Float -> Matrix Float -> Matrix Float)
 getActivation' Id      = flip const
 getActivation' Sigmoid = sigmoid'
 getActivation' Relu    = relu'
+getActivation' Sign    = sign'
 
 -- | Elementwise sigmoid computation
 sigmoid :: Matrix Float -> Matrix Float
@@ -123,33 +126,37 @@ relu = computeMap f where f x = if x < 0 then 0 else x
 relu' :: Matrix Float -> Matrix Float -> Matrix Float
 relu' x = compute . A.zipWith f x where f x0 dy0 = if x0 <= 0 then 0 else dy0
 
-randomishArray
-  :: (Mutable r ix e, R.RandomGen a, R.Random e)
-  => (e, e)
-  -> a
-  -> Sz ix
-  -> Array r ix e
-randomishArray rng g0 sz = compute $ unfoldlS_ sz _rand g0
-  where _rand g = let (a, g') = R.randomR rng g in (g', a)
+sign :: Matrix Float -> Matrix Float
+sign = computeMap f
+  where
+    f x = if x <= 0
+             then -1
+             else 1
+
+-- | Sign gradient approximation
+sign' :: Matrix Float
+      -> Matrix Float
+      -> Matrix Float
+sign' x = compute. A.zipWith f x
+  where
+    f x0 dy0 = if (x0 > (-1)) && (x0 < 1)
+                  then dy0
+                  else 0
 
 -- | Uniformly-distributed random numbers Array
-rand :: (R.Random e, Mutable r ix e) => (e, e) -> Sz ix -> IO (Array r ix e)
+rand
+  :: (Mutable r ix e, MWC.Variate e) =>
+     (e, e) -> Sz ix -> IO (Array r ix e)
 rand rng sz = do
-  g <- R.newStdGen
-  return $ randomishArray rng g sz
+    gens <- initWorkerStates Par (const createSystemRandom)
+    randomArrayWS gens sz (MWC.uniformR rng)
 
 -- | Random values from the Normal distribution
-randn
-  :: (Fractional e, Index ix, Resize r Ix1, Mutable r Ix1 e)
-  => Sz ix
-  -> IO (Array r ix e)
+randn :: forall e ix. (Fractional e, Index ix, Unbox e) => Sz ix -> IO (Array U ix e)
 randn sz = do
-  g  <- createSystemRandom
-  xs <- _nv g (totalElem sz)
-  return $ resize' sz (fromList Seq xs)
- where
-  _nv gen n = replicateM n (realToFrac <$> standard gen)
-  {-# INLINE _nv #-}
+    gens <- initWorkerStates Par (const createSystemRandom)
+    r <- randomArrayWS gens sz standard :: IO (Array P ix Double)
+    return (compute $ A.map realToFrac r)
 
 rows :: Matrix Float -> Int
 rows m = let (r :. _) = unSz $ size m in r
@@ -231,7 +238,7 @@ pass phase net (x, tgt) = (pred, grads)
       -- Forward
     lin =
       compute
-        $ delay (fromMaybe (error "lin1: Out of bounds") (inp |*| w))
+        $ delay (fromMaybe (error "Incompatible shapes") (inp |*| w))
         + (b `rowsLike` inp)
 
     (dZ, pred, t) = _pass lin layers
@@ -244,13 +251,28 @@ pass phase net (x, tgt) = (pred, grads)
   _pass inp (Linear' w : layers) = (dX, pred, Linear'Gradients dW : t)
    where
       -- Forward
-    lin = compute $ fromMaybe (error "lin2: Out of bounds") (inp |*| w)
+    lin = maybe (error "Incompatible shapes") compute (inp |*| w)
 
     (dZ, pred, t) = _pass lin layers
 
     -- Backward
     dW            = linearW' inp dZ
     dX            = linearX' w dZ
+
+  _pass inp (BinarizedLinear w : layers) = (dX, pred, BinarizedLinearGradients dW : t)
+   where
+    -- Forward
+    -- Binarize the weights (!)
+    wB = sign w
+
+    lin = maybe (error "Incompatible shapes") compute (inp |*| wB)
+
+    (dZ, pred, t) = _pass lin layers
+
+    -- Backward
+    dW            = linearW' inp dZ
+    -- Gradient w.r.t. wB (!)
+    dX            = linearX' wB dZ
 
   -- See also https://kratzert.github.io/2016/02/12/understanding-the-gradient-flow-through-the-batch-normalization-layer.html
   _pass inp (Batchnorm1d mu variance gamma beta : layers) =
@@ -336,7 +358,7 @@ pass phase net (x, tgt) = (pred, grads)
 
     dX       = compute $ delay dx1 + dx2
 
-    -- Alternatively use running stats during Eval phase:
+    -- Use running stats during Eval phase:
     out1 :: Matrix Float
     out1 = compute $ (delay inp - b mu) / b
       (compute $ sqrtA $ variance `addC` eps)
@@ -406,6 +428,12 @@ sgd lr n net0 dataStream = iterN n epochStep net0
 
   f (Linear' w) (Linear'Gradients dW) =
     Linear' (compute $ delay w - lr `_scale` dW)
+
+
+  -- Update hidden weights and binarized weights
+  f (BinarizedLinear w) (BinarizedLinearGradients dW) =
+    let w_ = compute $ delay w - lr `_scale` dW
+    in BinarizedLinear w_
 
   -- Update batchnorm parameters
   f (Batchnorm1d mu v gamma beta) (BN1 mu' v' dGamma dBeta) = Batchnorm1d

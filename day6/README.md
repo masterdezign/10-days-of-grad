@@ -21,3 +21,10 @@ Need some documentation? Here is
      ```
 
 ```
+Training a binarized network
+1 Training accuracy 89.5  Validation accuracy 89.3
+2 Training accuracy 91.9  Validation accuracy 91.8
+3 Training accuracy 93.1  Validation accuracy 92.1
+4 Training accuracy 93.5  Validation accuracy 92.7
+...
+```

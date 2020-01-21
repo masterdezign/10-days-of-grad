@@ -16,7 +16,6 @@ dependencies:
 - streamly
 - MonadRandom
 - array
-- random
 
 library:
   source-dirs: src

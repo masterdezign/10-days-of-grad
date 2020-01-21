@@ -1,7 +1,5 @@
 {-# LANGUAGE FlexibleContexts #-}
 
--- | = Batch normalization demo
-
 import           Data.Massiv.Array       hiding ( map
                                                 , zip
                                                 , unzip
@@ -86,53 +84,45 @@ train TrainSettings { _printEpochs = printEpochs, _lr = lr, _totalEpochs = total
 
 main :: IO ()
 main = do
-  trainS <- mnistStream 1000
+  -- NB batch size (!)
+  trainS <- mnistStream 100
                         "data/train-images-idx3-ubyte"
                         "data/train-labels-idx1-ubyte"
   testS <- mnistStream 1000
                        "data/t10k-images-idx3-ubyte"
                        "data/t10k-labels-idx1-ubyte"
 
-  let [i, h1, h2, o] = [784, 300, 50, 10]
-  (w1, b1) <- genWeights (i, h1)
+  -- NB use more binary neurons compared to a normal network (!)
+  let infl = 4
+
+  let [i, h1, h2, o] = [784, infl * 300, infl * 50, 10]
+  (w1, _) <- genWeights (i, h1)
   let ones n = A.replicate Par (Sz1 n) 1 :: Vector Float
       zeros n = A.replicate Par (Sz1 n) 0 :: Vector Float
-  (w2, b2) <- genWeights (h1, h2)
-  (w3, b3) <- genWeights (h2, o)
+  (w2, _) <- genWeights (h1, h2)
+  (w3, _) <- genWeights (h2, o)
 
-  -- With batchnorm
-  -- NB: Layer' has only weights, no biases.
+  -- NB: BinarizedLinear has only weights, no biases.
   -- The reason is that Batchnorm1d layer has trainable
   -- parameter beta performing similar transformation.
   let net =
-        [ Linear' w1
+        [ BinarizedLinear w1
         , Batchnorm1d (zeros h1) (ones h1) (ones h1) (zeros h1)
-        , Activation Relu
-        , Linear' w2
+        , Activation Sign
+
+        , BinarizedLinear w2
         , Batchnorm1d (zeros h2) (ones h2) (ones h2) (zeros h2)
-        , Activation Relu
-        , Linear' w3
+        , Activation Sign
+
+        , BinarizedLinear w3
+        -- NB this batchnorm (!)
+        , Batchnorm1d (zeros o) (ones o) (ones o) (zeros o)
         ]
 
-  -- No batchnorm layer
-  let net2 =
-        [ Linear w1 b1
-        , Activation Relu
-        , Linear w2 b2
-        , Activation Relu
-        , Linear w3 b3
-        ]
-
-  putStrLn "SGD + batchnorm"
+  putStrLn "Training a binarized network"
   net' <- train
-    TrainSettings { _printEpochs = 1, _lr = 0.1, _totalEpochs = 10 }
+    TrainSettings { _printEpochs = 1, _lr = 0.1, _totalEpochs = 30 }
     net
-    (trainS, testS)
-
-  putStrLn "SGD"
-  net2' <- train
-    TrainSettings { _printEpochs = 1, _lr = 0.1, _totalEpochs = 10 }
-    net2
     (trainS, testS)
 
   return ()
