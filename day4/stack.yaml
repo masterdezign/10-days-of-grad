@@ -7,7 +7,7 @@ packages:
 - '.'
 
 extra-deps:
-- massiv-0.4.4.0
+- massiv-0.4.5.0
 - scheduler-1.4.2.1
 - streamly-0.6.1
 

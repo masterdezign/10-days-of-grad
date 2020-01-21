@@ -20,7 +20,7 @@ library
 
   build-depends:
         base                    >= 4.7
-      , massiv                  == 0.4.4.0
+      , massiv                  == 0.4.5.0
       , mwc-random
       , random
       , streamly
