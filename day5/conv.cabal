@@ -31,7 +31,7 @@ library
     , backprop
     , base >=4.7 && <4.13
     , deepseq
-    , massiv >=0.4.4.0 && <0.5
+    , massiv >=0.4.5.0 && <0.5
     , microlens
     , microlens-th
     , mwc-random
@@ -54,7 +54,7 @@ executable conv
     , base >=4.7 && <4.13
     , conv
     , deepseq
-    , massiv >=0.4.4.0 && <0.5
+    , massiv >=0.4.5.0 && <0.5
     , massiv-io
     , microlens
     , microlens-th
@@ -82,7 +82,7 @@ benchmark default
     , conv
     , criterion
     , deepseq
-    , massiv >=0.4.4.0 && <0.5
+    , massiv >=0.4.5.0 && <0.5
     , microlens
     , microlens-th
     , mwc-random

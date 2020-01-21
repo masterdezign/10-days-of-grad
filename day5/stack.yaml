@@ -1,7 +1,7 @@
 # For more information, see: https://github.com/commercialhaskell/stack/blob/release/doc/yaml_configuration.md
 # vim: nospell
 
-resolver: lts-14.4
+resolver: lts-14.20
 
 packages:
 - '.'
@@ -13,7 +13,7 @@ extra-deps:
 #       - massiv
 #       - massiv-io
 - streamly-0.6.1
-- massiv-0.4.4.0
+- massiv-0.4.5.0
 
 # Override default flag values for local packages and extra-deps
 # flags: {}
