@@ -19,6 +19,7 @@ module NeuralNetwork
   , forward
 
   -- * Training
+  , dfa
   , sgd
 
   -- * Inference
@@ -71,23 +72,18 @@ type Vector a = Array U Ix1 a
 -- * Identity (no activation)
 data FActivation = Relu | Sigmoid | Id
 
--- Neural network layers: Linear, Batchnorm, Activation
+-- Neural network layers: Linear, Activation
 data Layer a = Linear (Matrix a) (Vector a)
-               -- Same as Linear, but without biases
-               | Linear' (Matrix a)
-               -- Batchnorm with running mean, variance, and two
-               -- learnable affine parameters
-               | Batchnorm1d (Vector a) (Vector a) (Vector a) (Vector a)
+               -- Similar to Linear, but having a random matrix for
+               -- direct feedback alignment as the last argument
+               | LinearDFA FActivation (Matrix a) (Matrix a)
                | Activation FActivation
 
 type NeuralNetwork a = [Layer a]
 
 data Gradients a = -- Weight and bias gradients
                    LinearGradients (Matrix a) (Vector a)
-                   -- Weight gradients
-                   | Linear'Gradients (Matrix a)
-                   -- Batchnorm parameters and gradients
-                   | BN1 (Vector a) (Vector a) (Vector a) (Vector a)
+                   | DFA (Matrix a -> Matrix a)  -- Partial gradients
                    | NoGrad  -- No learnable parameters
 
 -- | A neural network may work differently in training and evaluation modes
@@ -178,7 +174,9 @@ bias' dY = compute $ m `_scale` _sumRows dY
 -- exploit Haskell lazyness to never compute the
 -- gradients.
 forward :: NeuralNetwork Float -> Matrix Float -> Matrix Float
-forward net dta = fst $ pass Eval net (dta, undefined)
+forward net dta =
+  let (_, pred, _) = pass Eval net (dta, undefined)
+   in pred
 
 softmax :: Matrix Float -> Matrix Float
 softmax x =
@@ -195,11 +193,11 @@ pass
   -- ^ `NeuralNetwork` `Layer`s: weights and activations
   -> (Matrix Float, Matrix Float)
   -- ^ Mini-batch with labels
-  -> (Matrix Float, [Gradients Float])
+  -> (Matrix Float, Matrix Float, [Gradients Float])
   -- ^ NN computation from forward pass and weights gradients
-pass phase net (x, tgt) = (pred, grads)
+pass phase net (x, tgt) = (loss', pred, grads)
  where
-  (_, pred, grads) = _pass x net
+  (loss', pred, grads) = _pass x net
 
   -- Computes a tuple of:
   -- 1) Gradients for further backward pass
@@ -207,7 +205,6 @@ pass phase net (x, tgt) = (pred, grads)
   -- 3) Gradients of learnable parameters (where applicable)
   _pass inp [] = (loss', pred, [])
    where
-      -- TODO: Make softmax/loss/loss gradient a part of SGD/Adam?
     pred  = softmax inp
 
     -- Gradient of cross-entropy loss
@@ -229,107 +226,20 @@ pass phase net (x, tgt) = (pred, grads)
     dB            = bias' dZ
     dX            = linearX' w dZ
 
-  _pass inp (Linear' w : layers) = (dX, pred, Linear'Gradients dW : t)
+  _pass inp (LinearDFA fact w ww : layers) = (undefined, pred, DFA f : t)
    where
-      -- Forward
-    lin = compute $ fromMaybe (error "lin2: Out of bounds") (inp |*| w)
+    -- Forward
+    lin = compute $ fromMaybe (error "DFA1: Out of bounds") (inp |*| w)
+    y = getActivation fact lin
 
-    (dZ, pred, t) = _pass lin layers
+    (_, pred, t) = _pass y layers
 
-    -- Backward
-    dW            = linearW' inp dZ
-    dX            = linearX' w dZ
-
-  -- See also https://kratzert.github.io/2016/02/12/understanding-the-gradient-flow-through-the-batch-normalization-layer.html
-  _pass inp (Batchnorm1d mu variance gamma beta : layers) =
-    (dX, pred, BN1 batchMu batchVariance dGamma dBeta : t)
-   where
-      -- Forward
-    eps = 1e-12
-    b   = br (Sz1 $ rows inp)  -- Broadcast (replicate) rows from 1 to batch size
-    m   = recip (fromIntegral $ rows inp)
-
-    -- Step 1: mean
-    batchMu :: Vector Float
-    batchMu = compute $ m `_scale` _sumRows inp
-
-    -- Step 2: mean subtraction
-    xmu :: Matrix Float
-    xmu = compute $ delay inp - b batchMu
-
-    -- Step 3
-    sq  = compute $ delay xmu ^ (2 :: Int)
-
-    -- Step 4
-    batchVariance :: Vector Float
-    batchVariance = compute $ m `_scale` _sumRows sq
-
-    -- Step 5
-    sqrtvar       = sqrtA $ batchVariance `addC` eps
-
-    -- Step 6
-    ivar          = compute $ A.map recip sqrtvar
-
-    -- Step 7
-    xhat          = delay xmu * b ivar
-
-    -- Step 8: rescale
-    gammax        = b gamma * xhat
-
-    -- Step 9: translate
-    out0 :: Matrix Float
-    out0 = compute $ gammax + b beta
-
-    out :: Matrix Float
-    out = if phase == Train
-            -- Forward (Train phase)
-      then out0
-            -- Forward (Eval phase)
-      else out2
-
-    (dZ, pred, t) = _pass out layers
-
-    -- Backward
-
-    -- Step 9
-    dBeta         = compute $ _sumRows dZ
-
-    -- Step 8
-    dGamma        = compute $ _sumRows (compute $ delay dZ * xhat)
-    dxhat :: Matrix Float
-    dxhat    = compute $ delay dZ * b gamma
-
-    -- Step 7
-    divar    = _sumRows $ compute $ delay dxhat * delay xmu
-    dxmu1    = delay dxhat * b ivar
-
-    -- Step 6
-    dsqrtvar = A.map (negate . recip) (sqrtvar .^ 2) * divar
-
-    -- Step 5
-    dvar     = 0.5 `_scale` ivar * dsqrtvar
-
-    -- Step 4
-    dsq      = compute $ m `_scale` dvar
-
-    -- Step 3
-    dxmu2    = 2 `_scale` xmu * b dsq
-
-    -- Step 2
-    dx1      = compute $ dxmu1 + dxmu2
-    dmu      = A.map negate $ _sumRows dx1
-
-    -- Step 1
-    dx2      = b $ compute (m `_scale` dmu)
-
-    dX       = compute $ delay dx1 + dx2
-
-    -- Alternatively use running stats during Eval phase:
-    out1 :: Matrix Float
-    out1 = compute $ (delay inp - b mu) / b
-      (compute $ sqrtA $ variance `addC` eps)
-
-    out2 = compute $ (b gamma * delay out1) + b beta
+    -- Direct feedback
+    f loss' = r
+      where
+        dY = getActivation' fact lin loss'  -- Gradient of the activation
+        dY1 = compute $ fromMaybe (error "DFA2: Out of bounds") (dY |*| ww)
+        r = linearW' inp dY1
 
   _pass inp (Activation symbol : layers) = (dY, pred, NoGrad : t)
    where
@@ -363,7 +273,38 @@ br rows' v = expandWithin Dim2 rows' const v
 br1 :: Manifest r Ix1 Float => Sz1 -> Array r Ix1 Float -> MatrixPrim D Float
 br1 rows' v = expandWithin Dim1 rows' const v
 
--- | Stochastic gradient descent
+-- | Direct feedback alignment
+dfa
+  :: Monad m
+  => Float
+  -- ^ Learning rate
+  -> Int
+  -- ^ No of iterations
+  -> NeuralNetwork Float
+  -- ^ Neural network
+  -> SerialT m (Matrix Float, Matrix Float)
+  -- ^ Data stream
+  -> m (NeuralNetwork Float)
+dfa lr n net0 dataStream = iterN n epochStep net0
+  where
+    epochStep net = S.foldl' g net dataStream
+
+    g
+      :: NeuralNetwork Float
+      -> (Matrix Float, Matrix Float)
+      -> NeuralNetwork Float
+    g net dta = let (loss', _, dW) = pass Train net dta in zipWith (f loss') net dW
+
+    f :: Matrix Float -> Layer Float -> Gradients Float -> Layer Float
+    f loss' (LinearDFA fact w ww) (DFA grad) = (LinearDFA fact w1 ww)
+      where
+        dW = grad loss' :: Matrix Float
+        w1 = compute $ delay w - lr `_scale` dW
+
+    -- Skip other kinds of layers
+    f _ layer _ = layer
+
+-- | Stochastic gradient descend
 sgd
   :: Monad m
   => Float
@@ -383,7 +324,7 @@ sgd lr n net0 dataStream = iterN n epochStep net0
     :: NeuralNetwork Float
     -> (Matrix Float, Matrix Float)
     -> NeuralNetwork Float
-  g net dta = let (_, dW) = pass Train net dta in zipWith f net dW
+  g net dta = let (_, _, dW) = pass Train net dta in zipWith f net dW
 
   f :: Layer Float -> Gradients Float -> Layer Float
 
@@ -392,35 +333,14 @@ sgd lr n net0 dataStream = iterN n epochStep net0
     (compute $ delay w - lr `_scale` dW)
     (compute $ delay b - lr `_scale` dB)
 
-  f (Linear' w) (Linear'Gradients dW) =
-    Linear' (compute $ delay w - lr `_scale` dW)
-
-  -- Update batchnorm parameters
-  f (Batchnorm1d mu v gamma beta) (BN1 mu' v' dGamma dBeta) = Batchnorm1d
-    mu''
-    v''
-    gamma'
-    beta'
-   where
-    alpha  = 0.1
-    -- Running mean and variance
-    mu''   = compute $ (alpha `_scale` mu') + ((1 - alpha) `_scale` mu)
-    v''    = compute $ (alpha `_scale` v') + ((1 - alpha) `_scale` v)
-
-    gamma' = compute $ delay gamma - (lr `_scale` dGamma)
-    beta'  = compute $ delay beta - (lr `_scale` dBeta)
-
   -- No parameters to change
   f layer NoGrad = layer
 
-  f _     _      = error "Layer/gradients mismatch"
+  f _     _      = error "Not supported layer type"
 
 -- | Strict left fold
 iterN :: Monad m => Int -> (a -> m a) -> a -> m a
 iterN n f x0 = foldM (\x _ -> f x) x0 [1 .. n]
-
-addC :: (Num e, Source r ix e) => Array r ix e -> e -> Array D ix e
-addC m c = A.map (c +) m
 
 -- | Generate random weights and biases
 genWeights :: (Int, Int) -> IO (Matrix Float, Vector Float)
@@ -434,14 +354,9 @@ genWeights (nin, nout) = do
     sz = Sz (nin' :. nout')
     k  = 0.01
 
-  _genBiases n = randn (Sz n)
-
--- TODO: correct-by-construction
--- net <- genNetwork $ Sequential (I 2
---                                 :> Linear 128
---                                 :> Batchnorm1d
---                                 :> Activation Relu
---                                 :> O 1)
+  -- Zero biases for simplicity
+  _genBiases n = return $ A.replicate Par (Sz n) 0
+  -- _genBiases n = randn (Sz n)
 
 -- | Perform a binary classification
 inferBinary :: NeuralNetwork Float -> Matrix Float -> Matrix Float
@@ -510,6 +425,3 @@ _sumRows = A.foldlWithin Dim2 (+) 0.0
 -- | Sum values in each row and produce a delayed 1D Array
 _sumCols :: Matrix Float -> Array D Ix1 Float
 _sumCols = A.foldlWithin Dim1 (+) 0.0
-
--- TODO: another demo where only the forward pass is defined.
--- Then, use `backprop` package for automatic differentiation.

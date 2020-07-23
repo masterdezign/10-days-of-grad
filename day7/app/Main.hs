@@ -61,6 +61,7 @@ data TrainSettings = TrainSettings
 
 train
   :: TrainSettings
+  -- -> Method
   -> NeuralNetwork Float
   -> ( SerialT IO (Matrix Float, Matrix Float)
      , SerialT IO (Matrix Float, Matrix Float)
@@ -71,7 +72,7 @@ train TrainSettings { _printEpochs = printEpochs, _lr = lr, _totalEpochs = total
     (net', _) <- iterN
       (totalEpochs `div` printEpochs)
       (\(net0, j) -> do
-        net1 <- sgd lr printEpochs net0 trainS
+        net1 <- dfa lr printEpochs net0 trainS
 
         tacc <- net1 `avgAccuracy` trainS :: IO Float
         putStr $ printf "%d Training accuracy %.1f" (j :: Int) tacc
@@ -95,26 +96,20 @@ main = do
 
   let [i, h1, h2, o] = [784, 300, 50, 10]
   (w1, b1) <- genWeights (i, h1)
-  let ones n = A.replicate Par (Sz1 n) 1 :: Vector Float
-      zeros n = A.replicate Par (Sz1 n) 0 :: Vector Float
   (w2, b2) <- genWeights (h1, h2)
   (w3, b3) <- genWeights (h2, o)
 
-  -- With batchnorm
-  -- NB: Layer' has only weights, no biases.
-  -- The reason is that Batchnorm1d layer has trainable
-  -- parameter beta performing similar transformation.
+  -- NB: Generate fixed random matrices
+  ww1 <- randn (Sz2 o h1)
+  ww2 <- randn (Sz2 o h2)
+  ww3 <- randn (Sz2 o o)  -- This could be an identity matrix
+
   let net =
-        [ Linear' w1
-        , Batchnorm1d (zeros h1) (ones h1) (ones h1) (zeros h1)
-        , Activation Relu
-        , Linear' w2
-        , Batchnorm1d (zeros h2) (ones h2) (ones h2) (zeros h2)
-        , Activation Relu
-        , Linear' w3
+        [ LinearDFA Relu w1 ww1
+        , LinearDFA Relu w2 ww2
+        , LinearDFA Id w3 ww3
         ]
 
-  -- No batchnorm layer
   let net2 =
         [ Linear w1 b1
         , Activation Relu
@@ -123,16 +118,16 @@ main = do
         , Linear w3 b3
         ]
 
-  putStrLn "SGD + batchnorm"
-  net' <- train
+  putStrLn "Direct feedback alignment (no biases)"
+  net' <- train  -- dfa
     TrainSettings { _printEpochs = 1, _lr = 0.1, _totalEpochs = 10 }
     net
     (trainS, testS)
 
-  putStrLn "SGD"
-  net2' <- train
-    TrainSettings { _printEpochs = 1, _lr = 0.1, _totalEpochs = 10 }
-    net2
-    (trainS, testS)
+  -- putStrLn "SGD (zero initial biases)"
+  -- net'2 <- train sgd
+  --   TrainSettings { _printEpochs = 1, _lr = 0.1, _totalEpochs = 10 }
+  --   net2
+  --   (trainS, testS)
 
   return ()
