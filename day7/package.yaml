@@ -1,0 +1,43 @@
+name:                   dfa
+version:                0.0.0
+synopsis:               Direct Feedback Alignment
+description:            ""
+
+author:                 "Bogdan Penkovsky"
+maintainer:
+category:               AI
+extra-source-files:
+- README.md
+
+dependencies:
+- base                    >= 4.7
+- massiv                  >= 0.4.5.0 && < 0.5
+- mwc-random
+- streamly
+- MonadRandom
+- array
+
+library:
+  source-dirs: src
+  ghc-options:
+  - -Wall
+  - -fwarn-missing-signatures
+  # - -Werror
+
+executables:
+  mnist:
+    main:             Main.hs
+    source-dirs:      app
+    ghc-options:
+    - -O2
+    - -Wall
+    - -threaded
+    - -rtsopts
+    - -with-rtsopts=-N
+    dependencies:
+    - deepseq
+    - mnist-idx
+    - vector
+    - transformers
+    - split
+    - dfa

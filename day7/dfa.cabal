@@ -1,0 +1,56 @@
+cabal-version: 1.12
+
+-- This file has been generated from package.yaml by hpack version 0.31.2.
+--
+-- see: https://github.com/sol/hpack
+--
+-- hash: f53db95d0d4dd637b951ad6cb0a2677c3d779bc38a3ae1b7040889397226142e
+
+name:           dfa
+version:        0.0.0
+synopsis:       Direct Feedback Alignment
+category:       AI
+author:         Bogdan Penkovsky
+build-type:     Simple
+extra-source-files:
+    README.md
+
+library
+  exposed-modules:
+      NeuralNetwork
+      Shuffle
+  other-modules:
+      Paths_dfa
+  hs-source-dirs:
+      src
+  ghc-options: -Wall -fwarn-missing-signatures
+  build-depends:
+      MonadRandom
+    , array
+    , base >=4.7
+    , massiv >=0.4.5.0 && <0.5
+    , mwc-random
+    , streamly
+  default-language: Haskell2010
+
+executable mnist
+  main-is: Main.hs
+  other-modules:
+      Paths_dfa
+  hs-source-dirs:
+      app
+  ghc-options: -O2 -Wall -threaded -rtsopts -with-rtsopts=-N
+  build-depends:
+      MonadRandom
+    , array
+    , base >=4.7
+    , deepseq
+    , dfa
+    , massiv >=0.4.5.0 && <0.5
+    , mnist-idx
+    , mwc-random
+    , split
+    , streamly
+    , transformers
+    , vector
+  default-language: Haskell2010

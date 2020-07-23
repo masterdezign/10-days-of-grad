@@ -8,7 +8,7 @@
 * [Day 4](day4/): Batch normalization and MNIST images
 * [Day 5](day5/): Convolutional neural networks
 * [Day 6](day6/): Binarized neural networks
-* Day 7
+* [Day 7](day7/): Direct feedback alignment
 * Day 8
 * Day 9
 * Day 10
