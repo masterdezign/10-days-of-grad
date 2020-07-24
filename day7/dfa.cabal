@@ -4,7 +4,7 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: f53db95d0d4dd637b951ad6cb0a2677c3d779bc38a3ae1b7040889397226142e
+-- hash: 554adeadd91af9f19a5651361419df0b8e61a1ded730578967927b1fcbd56dd8
 
 name:           dfa
 version:        0.0.0
@@ -28,7 +28,7 @@ library
       MonadRandom
     , array
     , base >=4.7
-    , massiv >=0.4.5.0 && <0.5
+    , massiv >=0.5.2.0
     , mwc-random
     , streamly
   default-language: Haskell2010
@@ -46,7 +46,7 @@ executable mnist
     , base >=4.7
     , deepseq
     , dfa
-    , massiv >=0.4.5.0 && <0.5
+    , massiv >=0.5.2.0
     , mnist-idx
     , mwc-random
     , split

@@ -1,6 +1,6 @@
 {-# LANGUAGE FlexibleContexts #-}
 
--- | = Batch normalization demo
+-- | = Direct feedback alignment
 
 import           Data.Massiv.Array       hiding ( map
                                                 , zip
@@ -21,32 +21,32 @@ import           Data.List.Split                ( chunksOf )
 import           NeuralNetwork
 import           Shuffle                        ( shuffleIO )
 
-loadMNIST :: FilePath -> FilePath -> IO (Maybe [(Matrix Float, Matrix Float)])
+loadMNIST :: FilePath -> FilePath -> IO (Maybe [(Matrix U Float, Matrix U Float)])
 loadMNIST fpI fpL = runMaybeT $ do
   i <- MaybeT $ decodeIDXFile fpI
   l <- MaybeT $ decodeIDXLabelsFile fpL
   d <- MaybeT . return $ force $ labeledIntData l i
   return $ map _conv d
  where
-  _conv :: (Int, V.Vector Int) -> (Matrix Float, Matrix Float)
+  _conv :: (Int, V.Vector Int) -> (Matrix U Float, Matrix U Float)
   _conv (label, v) = (v1, toOneHot10 label)
    where
     v0 = V.map ((`subtract` 0.5) . (/ 255) . fromIntegral) v
     v1 = A.fromVector' Par (Sz2 1 784) v0
 
-toOneHot10 :: Int -> Matrix Float
+toOneHot10 :: Int -> Matrix U Float
 toOneHot10 n =
   A.makeArrayR U Par (Sz2 1 10) (\(_ :. j) -> if j == n then 1 else 0)
 
 mnistStream
-  :: Int -> FilePath -> FilePath -> IO (SerialT IO (Matrix Float, Matrix Float))
+  :: Int -> FilePath -> FilePath -> IO (SerialT IO (Matrix U Float, Matrix U Float))
 mnistStream batchSize fpI fpL = do
   Just dta <- loadMNIST fpI fpL
   dta2     <- shuffleIO dta
 
   -- Split data into batches
   let (vs, labs) = unzip dta2
-      merge :: [Matrix Float] -> Matrix Float
+      merge :: [Matrix U Float] -> Matrix U Float
       merge = A.compute . A.concat' 2
       vs'   = map merge $ chunksOf batchSize vs
       labs' = map merge $ chunksOf batchSize labs
@@ -55,23 +55,23 @@ mnistStream batchSize fpI fpL = do
 
 data TrainSettings = TrainSettings
   { _printEpochs :: Int  -- Print every N epochs
-  , _lr :: Float  -- Learning rate
   , _totalEpochs :: Int  -- Number of training epochs
   }
 
 train
   :: TrainSettings
   -> NeuralNetwork Float
-  -> ( SerialT IO (Matrix Float, Matrix Float)
-     , SerialT IO (Matrix Float, Matrix Float)
+  -> ( SerialT IO (Matrix U Float, Matrix U Float)
+     , SerialT IO (Matrix U Float, Matrix U Float)
      )
   -> IO (NeuralNetwork Float)
-train TrainSettings { _printEpochs = printEpochs, _lr = lr, _totalEpochs = totalEpochs } net (trainS, testS)
+train TrainSettings { _printEpochs = printEpochs, _totalEpochs = totalEpochs } net (trainS, testS)
   = do
     (net', _) <- iterN
       (totalEpochs `div` printEpochs)
       (\(net0, j) -> do
-        net1 <- sgd lr printEpochs net0 trainS
+        net1 <- adam adamParams printEpochs net0 trainS
+        -- net1 <- sgd 0.005 printEpochs net0 trainS
 
         tacc <- net1 `avgAccuracy` trainS :: IO Float
         putStr $ printf "%d Training accuracy %.1f" (j :: Int) tacc
@@ -99,37 +99,25 @@ main = do
   (w3, b3) <- genWeights (h2, o)
 
   -- NB: Generate fixed random matrices
-  ww1 <- randn (Sz2 o h1)
-  ww2 <- randn (Sz2 o h2)
-  ww3 <- randn (Sz2 o o)  -- This could be an identity matrix
+  let rng = (-0.1, 0.1)
+  ww1 <- rand rng (Sz2 o h1)
+  ww2 <- rand rng (Sz2 o h2)
+  -- ww3 <- rand rng (Sz2 o o)
+  let ww3 = compute (identityMatrix (Sz1 o))
 
   -- NB We assume that in DFA network there are only LinearDFA layers
   -- so that the loss is available to all layers,
   -- instead of the gradients
   let net =
-        [ LinearDFA Relu w1 ww1
-        , LinearDFA Relu w2 ww2
-        , LinearDFA Id w3 ww3
+        [ LinearDFA Relu w1 b1 ww1
+        , LinearDFA Relu w2 b2 ww2
+        , LinearDFA Id w3 b3 ww3
         ]
 
-  let net2 =
-        [ Linear w1 b1
-        , Activation Relu
-        , Linear w2 b2
-        , Activation Relu
-        , Linear w3 b3
-        ]
-
-  putStrLn "Direct feedback alignment (no biases)"
+  putStrLn "Direct feedback alignment"
   net' <- train
-    TrainSettings { _printEpochs = 1, _lr = 0.1, _totalEpochs = 10 }
+    TrainSettings { _printEpochs = 1, _totalEpochs = 30 }
     net
-    (trainS, testS)
-
-  putStrLn "SGD (zero initial biases)"
-  net'2 <- train
-    TrainSettings { _printEpochs = 1, _lr = 0.1, _totalEpochs = 10 }
-    net2
     (trainS, testS)
 
   return ()
