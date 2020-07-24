@@ -100,9 +100,10 @@ main = do
 
   -- NB: Generate fixed random matrices
   let rng = (-0.1, 0.1)
-  ww1 <- rand rng (Sz2 o h1)
-  ww2 <- rand rng (Sz2 o h2)
-  -- ww3 <- rand rng (Sz2 o o)
+  ww1 <- genNormalized rng (o, h1)
+  ww2 <- genNormalized rng (o, h2)
+
+  -- The final layer receives the loss directly
   let ww3 = compute (identityMatrix (Sz1 o))
 
   -- NB We assume that in DFA network there are only LinearDFA layers
@@ -121,3 +122,11 @@ main = do
     (trainS, testS)
 
   return ()
+
+genNormalized :: (Float, Float) -> (Int, Int) -> IO (Matrix U Float)
+genNormalized rng (o, h) = do
+  -- Draw from the uniform distribution
+  ww <- rand rng (Sz2 o h)
+  let m = 1.0 / fromIntegral h
+  -- Normalize the matrix by the number of outputs
+  return (m `scale` ww)

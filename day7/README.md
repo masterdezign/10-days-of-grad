@@ -24,9 +24,19 @@ digits recognition task as an example. Relevant documentation is in
 
 ```
 Direct feedback alignment
-1 Training accuracy 32.7  Validation accuracy 33.0
-2 Training accuracy 65.4  Validation accuracy 65.5
-3 Training accuracy 81.0  Validation accuracy 81.6
 
+Direct feedback alignment
+1 Training accuracy 55.7  Validation accuracy 56.0
+2 Training accuracy 73.2  Validation accuracy 75.0
+3 Training accuracy 83.1  Validation accuracy 82.8
+4 Training accuracy 81.5  Validation accuracy 82.0
+5 Training accuracy 86.7  Validation accuracy 87.2
+6 Training accuracy 88.4  Validation accuracy 88.7
+7 Training accuracy 87.7  Validation accuracy 88.1
+8 Training accuracy 86.0  Validation accuracy 86.4
+9 Training accuracy 87.8  Validation accuracy 88.4
+10 Training accuracy 89.9  Validation accuracy 90.2
+
+(Then, drops back to 0.1)
 
 ```
