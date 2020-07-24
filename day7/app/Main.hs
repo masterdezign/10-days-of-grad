@@ -61,7 +61,6 @@ data TrainSettings = TrainSettings
 
 train
   :: TrainSettings
-  -- -> Method
   -> NeuralNetwork Float
   -> ( SerialT IO (Matrix Float, Matrix Float)
      , SerialT IO (Matrix Float, Matrix Float)
@@ -72,7 +71,7 @@ train TrainSettings { _printEpochs = printEpochs, _lr = lr, _totalEpochs = total
     (net', _) <- iterN
       (totalEpochs `div` printEpochs)
       (\(net0, j) -> do
-        net1 <- dfa lr printEpochs net0 trainS
+        net1 <- sgd lr printEpochs net0 trainS
 
         tacc <- net1 `avgAccuracy` trainS :: IO Float
         putStr $ printf "%d Training accuracy %.1f" (j :: Int) tacc
@@ -104,6 +103,9 @@ main = do
   ww2 <- randn (Sz2 o h2)
   ww3 <- randn (Sz2 o o)  -- This could be an identity matrix
 
+  -- NB We assume that in DFA network there are only LinearDFA layers
+  -- so that the loss is available to all layers,
+  -- instead of the gradients
   let net =
         [ LinearDFA Relu w1 ww1
         , LinearDFA Relu w2 ww2
@@ -119,15 +121,15 @@ main = do
         ]
 
   putStrLn "Direct feedback alignment (no biases)"
-  net' <- train  -- dfa
+  net' <- train
     TrainSettings { _printEpochs = 1, _lr = 0.1, _totalEpochs = 10 }
     net
     (trainS, testS)
 
-  -- putStrLn "SGD (zero initial biases)"
-  -- net'2 <- train sgd
-  --   TrainSettings { _printEpochs = 1, _lr = 0.1, _totalEpochs = 10 }
-  --   net2
-  --   (trainS, testS)
+  putStrLn "SGD (zero initial biases)"
+  net'2 <- train
+    TrainSettings { _printEpochs = 1, _lr = 0.1, _totalEpochs = 10 }
+    net2
+    (trainS, testS)
 
   return ()

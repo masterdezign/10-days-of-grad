@@ -19,7 +19,6 @@ module NeuralNetwork
   , forward
 
   -- * Training
-  , dfa
   , sgd
 
   -- * Inference
@@ -42,8 +41,7 @@ module NeuralNetwork
   )
 where
 
-import           Control.Monad                  ( replicateM
-                                                , foldM
+import           Control.Monad                  ( foldM
                                                 )
 import           Control.Applicative            ( liftA2 )
 import qualified System.Random.MWC as MWC
@@ -83,7 +81,7 @@ type NeuralNetwork a = [Layer a]
 
 data Gradients a = -- Weight and bias gradients
                    LinearGradients (Matrix a) (Vector a)
-                   | DFA (Matrix a -> Matrix a)  -- Partial gradients
+                   | DFA (Matrix a)
                    | NoGrad  -- No learnable parameters
 
 -- | A neural network may work differently in training and evaluation modes
@@ -157,7 +155,7 @@ computeMap f = A.compute . A.map f
 linearW' :: Matrix Float -> Matrix Float -> Matrix Float
 linearW' x dy =
   let trX  = compute $ transpose x
-      prod = fromMaybe (error "linearW': Out of bounds") (trX |*| dy)
+      prod = fromMaybe (error ("linearW': shape mismatch " ++ show (size trX, size dy))) (trX |*| dy)
       m    = recip $ fromIntegral (rows x)
   in  m `scale` prod
 
@@ -175,8 +173,8 @@ bias' dY = compute $ m `_scale` _sumRows dY
 -- gradients.
 forward :: NeuralNetwork Float -> Matrix Float -> Matrix Float
 forward net dta =
-  let (_, pred, _) = pass Eval net (dta, undefined)
-   in pred
+  let (_, predic, _) = pass Eval net (dta, undefined)
+   in predic
 
 softmax :: Matrix Float -> Matrix Float
 softmax x =
@@ -195,23 +193,21 @@ pass
   -- ^ Mini-batch with labels
   -> (Matrix Float, Matrix Float, [Gradients Float])
   -- ^ NN computation from forward pass and weights gradients
-pass phase net (x, tgt) = (loss', pred, grads)
+pass _ net (x, tgt) = _pass x net
  where
-  (loss', pred, grads) = _pass x net
-
   -- Computes a tuple of:
   -- 1) Gradients for further backward pass
-  -- 2) NN prediction
+  -- 2) NN prediciction
   -- 3) Gradients of learnable parameters (where applicable)
-  _pass inp [] = (loss', pred, [])
+  _pass inp [] = (loss1, predic, [])
    where
-    pred  = softmax inp
+    predic  = softmax inp
 
     -- Gradient of cross-entropy loss
     -- after softmax activation.
-    loss' = compute $ delay pred - delay tgt
+    loss1 = compute $ delay predic - delay tgt
 
-  _pass inp (Linear w b : layers) = (dX, pred, LinearGradients dW dB : t)
+  _pass inp (Linear w b : layers) = (dX, predic, LinearGradients dW dB : t)
    where
       -- Forward
     lin =
@@ -219,33 +215,32 @@ pass phase net (x, tgt) = (loss', pred, grads)
         $ delay (fromMaybe (error "lin1: Out of bounds") (inp |*| w))
         + (b `rowsLike` inp)
 
-    (dZ, pred, t) = _pass lin layers
+    (dZ, predic, t) = _pass lin layers
 
     -- Backward
     dW            = linearW' inp dZ
     dB            = bias' dZ
     dX            = linearX' w dZ
 
-  _pass inp (LinearDFA fact w ww : layers) = (undefined, pred, DFA f : t)
+  _pass inp (LinearDFA fact w ww : layers) = (loss1, predic, DFA df : t)
    where
     -- Forward
     lin = compute $ fromMaybe (error "DFA1: Out of bounds") (inp |*| w)
     y = getActivation fact lin
 
-    (_, pred, t) = _pass y layers
+    (loss1, predic, t) = _pass y layers
 
     -- Direct feedback
-    f loss' = r
+    df = linearW' inp dY1
       where
-        dY = getActivation' fact lin loss'  -- Gradient of the activation
+        dY = getActivation' fact lin loss1  -- Gradient of the activation
         dY1 = compute $ fromMaybe (error "DFA2: Out of bounds") (dY |*| ww)
-        r = linearW' inp dY1
 
-  _pass inp (Activation symbol : layers) = (dY, pred, NoGrad : t)
+  _pass inp (Activation symbol : layers) = (dY, predic, NoGrad : t)
    where
     y             = getActivation symbol inp  -- Forward
 
-    (dZ, pred, t) = _pass y layers
+    (dZ, predic, t) = _pass y layers
 
     dY            = getActivation' symbol inp dZ  -- Backward
 
@@ -272,37 +267,6 @@ br rows' v = expandWithin Dim2 rows' const v
 -- | Broadcast by the given number of cols
 br1 :: Manifest r Ix1 Float => Sz1 -> Array r Ix1 Float -> MatrixPrim D Float
 br1 rows' v = expandWithin Dim1 rows' const v
-
--- | Direct feedback alignment
-dfa
-  :: Monad m
-  => Float
-  -- ^ Learning rate
-  -> Int
-  -- ^ No of iterations
-  -> NeuralNetwork Float
-  -- ^ Neural network
-  -> SerialT m (Matrix Float, Matrix Float)
-  -- ^ Data stream
-  -> m (NeuralNetwork Float)
-dfa lr n net0 dataStream = iterN n epochStep net0
-  where
-    epochStep net = S.foldl' g net dataStream
-
-    g
-      :: NeuralNetwork Float
-      -> (Matrix Float, Matrix Float)
-      -> NeuralNetwork Float
-    g net dta = let (loss', _, dW) = pass Train net dta in zipWith (f loss') net dW
-
-    f :: Matrix Float -> Layer Float -> Gradients Float -> Layer Float
-    f loss' (LinearDFA fact w ww) (DFA grad) = (LinearDFA fact w1 ww)
-      where
-        dW = grad loss' :: Matrix Float
-        w1 = compute $ delay w - lr `_scale` dW
-
-    -- Skip other kinds of layers
-    f _ layer _ = layer
 
 -- | Stochastic gradient descend
 sgd
@@ -333,10 +297,14 @@ sgd lr n net0 dataStream = iterN n epochStep net0
     (compute $ delay w - lr `_scale` dW)
     (compute $ delay b - lr `_scale` dB)
 
+  f (LinearDFA fact w ww) (DFA dW) = (LinearDFA fact w1 ww)
+    where
+      w1 = compute $ delay w - lr `_scale` dW
+
   -- No parameters to change
   f layer NoGrad = layer
 
-  f _     _      = error "Not supported layer type"
+  f _     _      = error "Layer/gradients mismatch"
 
 -- | Strict left fold
 iterN :: Monad m => Int -> (a -> m a) -> a -> m a
@@ -361,9 +329,9 @@ genWeights (nin, nout) = do
 -- | Perform a binary classification
 inferBinary :: NeuralNetwork Float -> Matrix Float -> Matrix Float
 inferBinary net dta =
-  let prediction = forward net dta
+  let prediciction = forward net dta
   -- Thresholding the NN output
-  in  compute $ A.map (\a -> if a < 0.5 then 0 else 1) prediction
+  in  compute $ A.map (\a -> if a < 0.5 then 0 else 1) prediciction
 
 maxIndex :: (Ord a, Num b, Enum b) => [a] -> b
 maxIndex xs = snd $ maximumBy (comparing fst) (zip xs [0 ..])
