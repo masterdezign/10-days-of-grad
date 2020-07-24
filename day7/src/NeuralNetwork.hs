@@ -61,7 +61,6 @@ import           Streamly
 import qualified Streamly.Prelude              as S
 import           Data.Maybe                     ( fromMaybe )
 
-
 -- Activation function symbols:
 -- * Rectified linear unit (ReLU)
 -- * Sigmoid
@@ -175,10 +174,12 @@ forward net dta =
    in predic
 
 softmax :: Matrix U Float -> Matrix U Float
-softmax x =
-  let x0 = compute $ expA (delay x) :: Matrix U Float
+softmax x_ =
+  let x' = delay x_
+      x = x' `addC` (-A.maximum' x')
+      x0 = compute $ expA x :: Matrix U Float
       x1 = compute (_sumCols x0) :: Vector U Float  -- Sumcols in this case!
-      x2 = x1 `colsLike` x
+      x2 = x1 `colsLike` x_
   in  (compute $ delay x0 / x2)
 
 -- | Both forward and backward neural network passes
